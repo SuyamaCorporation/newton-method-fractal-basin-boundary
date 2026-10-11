@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Newton's Method Fractal Explorer</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen p-4">
+<div class="max-w-2xl mx-auto">
+  <h1 class="text-2xl font-bold text-center text-indigo-400 mb-1">Newton's Method Fractal Explorer</h1>
+  <p class="text-center text-gray-400 text-sm mb-4">Complex plane basin of attraction visualization</p>
+
+  <!-- Controls -->
+  <div class="bg-gray-800 rounded-xl p-4 mb-4 flex flex-wrap gap-3 items-center">
+    <div>
+      <label class="text-xs text-gray-300 block mb-1">Polynomial</label>
+      <select id="poly-select" class="bg-gray-700 text-white rounded px-2 py-1 text-sm">
+        <option value="z3_1">z³ − 1</option>
+        <option value="z4_1">z⁴ − 1</option>
+        <option value="z5_1">z⁵ − 1</option>
+        <option value="z6_z">z⁶ − z</option>
+        <option value="z3_2z_2">z³ − 2z + 2</option>
+      </select>
+    </div>
+    <div>
+      <label class="text-xs text-gray-300 block mb-1">Max Iter: <span id="max-iter-val" class="text-indigo-300">50</span></label>
+      <input type="range" id="max-iter" min="10" max="100" value="50" class="w-24">
+    </div>
+    <div class="flex gap-2">
+      <button id="btn-zoom-in" class="bg-indigo-800 hover:bg-indigo-700 px-3 py-1 rounded text-sm">Zoom In</button>
+      <button id="btn-zoom-out" class="bg-indigo-800 hover:bg-indigo-700 px-3 py-1 rounded text-sm">Zoom Out</button>
+      <button id="btn-reset-view" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm">Reset</button>
+    </div>
+    <button id="btn-render" class="bg-indigo-700 hover:bg-indigo-600 px-4 py-2 rounded text-sm font-semibold">Render</button>
+  </div>
+
+  <p class="text-xs text-gray-500 mb-2 text-center">Click on canvas to center view at that point</p>
+
+  <!-- Canvas -->
+  <div class="flex justify-center">
+    <canvas id="canvas" width="512" height="512" class="rounded cursor-crosshair" style="max-width:100%"></canvas>
+  </div>
+
+  <!-- View info -->
+  <div class="bg-gray-800 rounded-xl p-3 mt-3 text-xs font-mono text-gray-400">
+    <span id="view-info">Center: (0,0) Range: ±2.0</span>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const SIZE = 512;
+
+let viewCX = 0, viewCY = 0, viewRange = 2.0;
+
+// Polynomial definitions: f(z), f'(z), roots (for coloring)
+const POLYS = {
+  z3_1: {
+    f: (re,im) => {
+      // z^3 - 1
+      const re2=re*re-im*im, im2=2*re*im;
+      return [re2*re-im2*im-1, re2*im+im2*re];
+    },
+    df: (re,im) => {
+      // 3z^2
+      return [3*(re*re-im*im), 3*2*re*im];
+    },
+    roots: [[1,0],[-0.5,0.866],[-0.5,-0.866]]
+  },
+  z4_1: {
+    f: (re,im) => {
+      // z^4 - 1 = (z^2)^2 - 1
+      const a=re*re-im*im, b=2*re*im;
+      return [a*a-b*b-1, 2*a*b];
+    },
+    df: (re,im) => {
+      // 4z^3
+      const a=re*re-im*im, b=2*re*im;
+      return [4*(a*re-b*im), 4*(a*im+b*re)];
+    },
+    roots: [[1,0],[0,1],[-1,0],[0,-1]]
+  },
+  z5_1: {
+    f: (re,im) => {
+      // z^5 - 1
+      const a=re*re-im*im, b=2*re*im;
+      const c=a*re-b*im, d=a*im+b*re;
+      const e2=c*re-d*im, f2=c*im+d*re;
+      return [e2*re-f2*im-1, e2*im+f2*re];
+    },
+    df: (re,im) => {
+      // 5z^4
+      const a=re*re-im*im, b=2*re*im;
+      const c=a*a-b*b, d=2*a*b;
+      return [5*(c*re-d*im), 5*(c*im+d*re)];
+    },
+    roots: Array.from({length:5},(_,k)=>[Math.cos(2*Math.PI*k/5),Math.sin(2*Math.PI*k/5)])
+  },
+  z6_z: {
+    f: (re,im) => {
+      // z^6 - z
+      const a=re*re-im*im, b=2*re*im;
+      const c=a*re-b*im, d=a*im+b*re;
+      const e=c*re-d*im, f2=c*im+d*re;
+      const g=e*re-f2*im, h2=e*im+f2*re;
+      return [g-re, h2-im];
+    },
+    df: (re,im) => {
+      // 6z^5 - 1
+      const a=re*re-im*im, b=2*re*im;
+      const c=a*a-b*b, d=2*a*b;
+      const e=c*re-d*im, f2=c*im+d*re;
+      return [6*e-1, 6*f2];
+    },
+    roots: [[0,0],[1,0],[-1,0],[0,1],[0,-1],[0.5,0.866]]
+  },
+  z3_2z_2: {
+    f: (re,im) => {
+      // z^3 - 2z + 2
+      const a=re*re-im*im, b=2*re*im;
+      return [a*re-b*im-2*re+2, a*im+b*re-2*im];
+    },
+    df: (re,im) => {
+      // 3z^2 - 2
+      return [3*(re*re-im*im)-2, 3*2*re*im];
+    },
+    roots: [[-1.7693,0],[0.8847,0.5897],[0.8847,-0.5897]]
+  }
+};
+
+// Colors for roots (HSL)
+const ROOT_COLORS = [
+  [0,180,120],[220,140,200],[50,200,120],[270,140,200],[180,140,200],[320,140,200]
+];
+
+function dist2(ax,ay,bx,by) { return (ax-bx)**2+(ay-by)**2; }
+
+function complexDiv(are,aim,bre,bim) {
+  const denom = bre*bre+bim*bim;
+  if (denom < 1e-20) return [0,0];
+  return [(are*bre+aim*bim)/denom, (aim*bre-are*bim)/denom];
+}
+
+function render() {
+  const polyKey = document.getElementById('poly-select').value;
+  const poly = POLYS[polyKey];
+  const maxIter = parseInt(document.getElementById('max-iter').value);
+  const roots = poly.roots;
+  const imageData = ctx.createImageData(SIZE, SIZE);
+  const data = imageData.data;
+
+  for (let py = 0; py < SIZE; py++) {
+    for (let px = 0; px < SIZE; px++) {
+      let re = viewCX + (px/SIZE - 0.5) * 2 * viewRange;
+      let im = viewCY + (py/SIZE - 0.5) * 2 * viewRange;
+
+      let iter = 0;
+      while (iter < maxIter) {
+        const [fre,fim] = poly.f(re,im);
+        const [dfre,dfim] = poly.df(re,im);
+        const [qre,qim] = complexDiv(fre,fim,dfre,dfim);
+        re -= qre;
+        im -= qim;
+        // Check convergence
+        if (fre*fre+fim*fim < 1e-10) break;
+        iter++;
+      }
+
+      // Find closest root
+      let bestRoot = 0, bestDist = Infinity;
+      roots.forEach(([rx,ry],i) => {
+        const d = dist2(re,im,rx,ry);
+        if (d < bestDist) { bestDist=d; bestRoot=i; }
+      });
+
+      const brightness = Math.max(0, 1 - iter/maxIter);
+      const [h,s,l_base] = ROOT_COLORS[bestRoot % ROOT_COLORS.length];
+      const l = Math.round(l_base * brightness);
+
+      // HSL to RGB
+      const sf = s/255, lf = l/255;
+      const c2 = (1-Math.abs(2*lf-1))*sf;
+      const x2 = c2*(1-Math.abs(((h/60)%2)-1));
+      const m2 = lf-c2/2;
+      let r,g,b;
+      if (h<60){r=c2;g=x2;b=0}else if(h<120){r=x2;g=c2;b=0}else if(h<180){r=0;g=c2;b=x2}
+      else if(h<240){r=0;g=x2;b=c2}else if(h<300){r=x2;g=0;b=c2}else{r=c2;g=0;b=x2}
+      r=Math.round((r+m2)*255); g=Math.round((g+m2)*255); b=Math.round((b+m2)*255);
+
+      const idx=(py*SIZE+px)*4;
+      data[idx]=r; data[idx+1]=g; data[idx+2]=b; data[idx+3]=255;
+    }
+  }
+  ctx.putImageData(imageData, 0, 0);
+
+  // Draw roots as white dots
+  const polyKey2 = document.getElementById('poly-select').value;
+  POLYS[polyKey2].roots.forEach(([rx,ry]) => {
+    const px = Math.round((rx/(2*viewRange)+0.5)*SIZE - viewCX/(2*viewRange)*SIZE);
+    const py = Math.round((ry/(2*viewRange)+0.5)*SIZE - viewCY/(2*viewRange)*SIZE);
+    // Proper pixel mapping
+    const sx = Math.round(((rx-viewCX)/(2*viewRange)+0.5)*SIZE);
+    const sy = Math.round(((ry-viewCY)/(2*viewRange)+0.5)*SIZE);
+    ctx.beginPath();
+    ctx.arc(sx,sy,4,0,Math.PI*2);
+    ctx.fillStyle='white';
+    ctx.fill();
+  });
+
+  document.getElementById('view-info').textContent =
+    `Center: (${viewCX.toFixed(4)}, ${viewCY.toFixed(4)}) Range: ±${viewRange.toFixed(4)}`;
+}
+
+canvas.addEventListener('click', e => {
+  const rect = canvas.getBoundingClientRect();
+  const px = (e.clientX-rect.left)*(SIZE/rect.width);
+  const py = (e.clientY-rect.top)*(SIZE/rect.height);
+  viewCX += (px/SIZE - 0.5) * 2 * viewRange;
+  viewCY += (py/SIZE - 0.5) * 2 * viewRange;
+  render();
+});
+
+document.getElementById('btn-zoom-in').addEventListener('click', () => { viewRange /= 2; render(); });
+document.getElementById('btn-zoom-out').addEventListener('click', () => { viewRange *= 2; render(); });
+document.getElementById('btn-reset-view').addEventListener('click', () => { viewCX=0; viewCY=0; viewRange=2; render(); });
+document.getElementById('btn-render').addEventListener('click', render);
+document.getElementById('max-iter').addEventListener('input', e => {
+  document.getElementById('max-iter-val').textContent = e.target.value;
+});
+document.getElementById('poly-select').addEventListener('change', render);
+
+render();
+</script>
+</body>
+</html>
